@@ -1,0 +1,52 @@
+---
+title: "variables"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Tipos dinámicos de variables
+
+- numeric: Representa a un número.
+- integer: Representa a un número entero.
+- character: Representa a un conjunto de caracteres (string)
+- Date: Tipo de fecha.
+- logical : Valor boolean. TRUE o FALSE
+- factor: Es como un enumerado. Los niveles indican los posibles tipos que existen de valores.
+
+
+# Crear variables
+
+```{r}
+a <- 0.5                           # Numeric
+b <- 5                             # Entero
+c <- "Esto es una cadena"          # Character
+d <- TRUE                          # Logical
+e <- factor(c("Hombre","Mujer"))   # Factor
+
+```
+
+# Mostrar variables
+
+```{r}
+a
+b
+c
+d
+e
+```
+
+# Mostrar tipos
+
+```{r}
+class(a)
+class(b)
+class(c)
+class(d)
+class(e)
+
+```
