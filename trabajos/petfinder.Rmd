@@ -1,0 +1,1630 @@
+---
+title: "Práctica2_SIGE"
+author: "jmv74211"
+date: "08/6/2019"
+output:
+  pdf_document: 
+    keep_tex: yes
+  html_document: default
+---
+
+## Práctica 2: Deep Learning para multi-clasificación
+### Jonathan Martín Valera
+
+---
+
+(Importante: En este documento, solo está documentado una parte, para más información, hay que
+consultar la documentación de la práctica adjunta en esta entrega).
+
+# 1. Introducción
+
+En esta segunda práctica de la asignatura Sistemas Inteligentes para la Gestión en la
+Empresa se estudiará cómo crear un modelo de clasificación de imágenes basado en redes
+neuronales profundas.
+Para ello, a lo largo de esta documentación, se detallará el proceso seguido en el di-
+seño e implementación de un sistema basado en redes neuronales para el problema de
+clasificación que se propone a continuación.
+
+Descripción del problema
+
+Se trabajará sobre el conjunto de imágenes de mascotas del dataset de Kaggle PetFin-
+der.my (https://www.kaggle.com/c/petfinder-adoption-prediction).
+El problema consiste en predecir el tiempo de adopción de una mascota, representado
+con un valor categórico {0, ..., 4}, a partir de datos y fotos del animal.
+Los datos a utilizar se han descargado del siguiente enlace: https://s3.us-east-2.
+amazonaws.com/pets-adoption/petfinder-adoption-prediction.zip.
+
+# 2. Clasificación
+
+Dado que nuestro objetivo es el de poder realizar una clasificación de imágenes, se han
+construido una serie de modelos de redes neuronales convolucionales que realicen dichas
+clasificaciones. Para la construcción de estos modelos, se han usado diversas técnicas como
+ajustes en la topologı́a de red, ajuste de hiperparámetros, transfer learning . . . .
+Para cada modelo, se ha calculado su tasa de loss y acc en los conjuntos de entrena-
+miento, validación y test.
+A continuación se van a detallar el proceso que se ha seguido para la construcción de
+dichos modelos, y los resultados obtenidos.
+
+## 2.1 Partición de los datos entrenamiento/validación/test
+
+Inicialmente tenemos un directorio clasificado por etiquetas que contiene las imágenes de
+entrenamiento que se van a usar en el modelo de clasificación. Dado que no tenemos un
+conjunto de validación, y el conjunto de test proporcionado no está clasificado,
+y por lo tanto, se desconocen las etiquetas de las imágenes, se ha tenido que dividir
+las imágenes de entrenamiento en dos subconjuntos adicionales para validación
+y test.
+Para realizar dicha división, se ha hecho uso de una función que me han proporcionado
+unos compañeros de clase que automatiza todo este proceso de mover las imágenes a sus
+respectivos conjuntos. El código fuente es el siguiente:
+
+```{r}
+# Función para dividir el conjunto etiquetado de train en otro conjunto
+# etiquetado.
+separaTrainTest <- function(carpeta_train, carpeta_test, porcentaje = 0.2) {
+  clases<-list.dirs(path = carpeta_train, full.names = FALSE)
+  for (clase in clases){
+    if(clase != "") {
+      carpeta_clase_train <- paste(carpeta_train,clase,sep = "/")
+      carpeta_clase_test <- paste(carpeta_test,clase,sep = "/")
+      todos <- list.files(path = carpeta_clase_train)
+      a_copiar <- sample(todos, length(todos)*porcentaje)
+      
+      for (fichero in a_copiar){
+        file.copy(paste(carpeta_clase_train, fichero, sep = "/"),
+        carpeta_clase_test)
+        file.remove(paste(carpeta_clase_train, fichero, sep = "/"))
+      }
+    }
+  }
+}
+# Se genera el conjunto de test a partir de las imágenes etiquetadas
+# de train
+separaTrainTest("./data/train_images", "./data/test_images")
+```
+
+Este función se ha ejecutado dos veces, y se han repartido las imágenes de la siguiente
+forma:
+Conjunto de entrenamiento 65 %
+Conjunto validación: 15 %
+Conjunto de test: 20 %
+
+## 2.2 Lectura de datos
+
+Tras haber generado los conjuntos de validación y test, (se tienen 3 directorios que con-
+tienen subdirectorios que clasifican las imágenes por etiquetas) se ha procedido a cargar
+dichos conjuntos utilizando la biblioteca Keras. Para ello se han empleado los siguientes
+pasos:
+
+Se definen las rutas donde se ubican las imágenes de entrenamiento, validación y
+test.
+```{r}
+# Se cargan las bibliotecas necesarias para deeplearning
+library(keras)
+
+# Se definen las rutas donde se ubican las imágenes de entrenamiento, validación y test
+train_dir      <- '/home/rstudio-user/data/train_images'
+validation_dir <- '/home/rstudio-user/data/validation_images'
+test_dir       <- '/home/rstudio-user/data/test_images'
+```
+
+Se definen los generadores de la imagen, haciendo un reescalado 1/255.
+
+```{r}
+# Se definen los generadores de la imagen, haciendo un reescalado 1/255
+train_datagen      <- image_data_generator(rescale = 1/255)
+validation_datagen <- image_data_generator(rescale = 1/255)
+test_datagen       <- image_data_generator(rescale = 1/255)
+```
+
+Se cargan las imágenes a través de un directorio clasificado por etiquetas.
+
+```{r}
+# Se definen las imágenes de entrenamiento a través de un directorio clasificado por etiquetas
+train_data <- flow_images_from_directory(
+  directory = train_dir,
+  generator = train_datagen,
+  target_size = c(150, 150),     # (w, h) --> (150, 150)
+  batch_size = 100,              # grupos de 100 imágenes
+  class_mode = "categorical"     # etiquetas multiclase
+)
+
+# Se definen las imágenes de validación través de un directorio clasificado por etiquetas
+validation_data <- flow_images_from_directory(
+  directory = validation_dir,
+  generator = validation_datagen,
+  target_size = c(150, 150),     # (w, h) --> (150, 150)
+  batch_size = 100,              # grupos de 100 imágenes
+  class_mode = "categorical"     # etiquetas multiclase
+)
+
+# Se definen las imágenes de test través de un directorio clasificado por etiquetas
+test_data <- flow_images_from_directory(
+  directory = test_dir,
+  generator = test_datagen,
+  target_size = c(150, 150),   # (w, h) --> (150, 150)
+  batch_size = 100,            # grupos de 100 imágenes
+  class_mode = "categorical"   # etiquetas multiclase
+)
+```
+
+Por último, se han creado unas variables para especificar la dimensión de los datos y
+el número de clases del modelo. Estas variables serán necesarias para posteriormente
+definir los modelos de clasificación.
+
+```{r}
+# Se define la dimensión de los datos
+input_shape_images <- c(150,150,3)
+# Se especifica el número de clases de este problema.
+num_classes <- 5
+```
+
+## 2.3.Modelos de clasificación
+
+Para este problema de clasificación, se ha construido una serie de modelos aplicando
+una serie de técnicas para evaluar su comportamiento y resultado. A continuación se
+van a especificar cómo se ha construido dichos modelos, clasificándolos según la técnica
+empleada.
+
+### 2.3.1 Ajuste de topología e hiperparámetros
+
+En primer lugar, se han construido una serie de modelos en los que se ha ido variando
+la topologı́a de la red y e hiperparámetros. Por ejemplo, se han especificado diferentes
+capas, número de neuronas y algoritmo de optimización.
+
+#### Modelo v1
+
+El primer modelo que se ha construido, es un modelo base que se ha tomado de [3]. Dicho
+modelo combina una red convolutiva, con una red red neuronal profunda. La topologı́a y
+
+```{r}
+################################################ MODEL V1 ################################################
+
+model <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32,  kernel_size = c(3, 3), activation = "relu", input_shape = input_shape_images) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 64,  kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_flatten() %>%
+  layer_dense(units = 512, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model)
+
+model %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+
+history <- model %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate <- model %>% evaluate_generator(test_data, steps = 5)
+print(test_rate)
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.282       1.450
+
+#### Modelo v2
+
+En este modelo, se ha modificado por completo la topologı́a de la red del modelo v1. En
+este caso, se ha utilizado una topologı́a mencionada en [4]. El modelo es el siguiente:
+
+```{r}
+################################################ MODEL V2 ################################################
+
+model_v2 <- keras_model_sequential() %>%
+  layer_separable_conv_2d(filters = 32, kernel_size = 3,
+                          activation = "relu",
+                          input_shape = input_shape_images) %>%
+  layer_separable_conv_2d(filters = 64, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = 2) %>%
+  layer_separable_conv_2d(filters = 64, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_separable_conv_2d(filters = 128, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = 2) %>%
+  layer_separable_conv_2d(filters = 64, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_separable_conv_2d(filters = 128, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_global_average_pooling_2d() %>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v2)
+
+model_v2 %>% compile(
+  optimizer = "rmsprop",
+  loss = "categorical_crossentropy",
+  metrics = c("accuracy")
+)
+
+history_v2 <- model_v2 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v2 <- model_v2 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v2)
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.284      1.450
+
+#### Modelo v3
+
+En este nuevo modelo, se ha usado el modelo v2, modificando el número de neuronas de
+la parte profunda y añadiendo nuevas capas. El modelo es el siguiente:
+
+```{r}
+################################################ MODEL V3 ################################################
+
+model_v3 <- keras_model_sequential() %>%
+  layer_separable_conv_2d(filters = 32, kernel_size = 3,
+                          activation = "relu",
+                          input_shape = input_shape_images) %>%
+  layer_separable_conv_2d(filters = 64, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = 2) %>%
+  layer_separable_conv_2d(filters = 64, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_separable_conv_2d(filters = 128, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = 2) %>%
+  layer_separable_conv_2d(filters = 64, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_separable_conv_2d(filters = 128, kernel_size = 3,
+                          activation = "relu") %>%
+  layer_global_average_pooling_2d() %>%
+  layer_dense(units = 256, activation = "relu") %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v3)
+
+model_v3 %>% compile(
+  optimizer = "adam",
+  loss = "categorical_crossentropy",
+  metrics = c("accuracy")
+)
+
+history_v3 <- model_v3 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v3 <- model_v3 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v3)
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.281      1.459
+
+#### Modelo v4
+
+En este nuevo modelo, se ha definido una serie de capas convolutivas en orden creciente
+de neuronas: 32,64,128 y 256 con un kernel size de 5 (a diferencia de los anteriores que
+su valor era 3), y una única capa densa de 512 neuronas. El modelo es el siguiente:
+
+```{r}
+################################################ MODEL V4 ################################################
+
+model_v4 <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32,  kernel_size = c(5, 5), activation = "relu", input_shape = input_shape_images) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 64,  kernel_size = c(5, 5), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(5, 5), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 256, kernel_size = c(5, 5), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_flatten() %>%
+  layer_dense(units = 512, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v4)
+
+model_v4 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+
+history <- model_v4 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v4 <- model_v4 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v4)
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.281      1.457
+
+#### Modelo v5
+
+Modelo similar al modelo v4, especificando un kernel size de tamaño 3 menos en la
+última capa que es de tamaño 5. Respecto a la parte profunda, se han añadido 3 capas
+adicionales. El modelo es el siguiente:
+
+```{r}
+################################################ MODEL V5 ################################################
+
+
+model_v5 <- keras_model_sequential() %>%
+  layer_conv_2d(filters = 32,  kernel_size = c(3, 3), activation = "relu", input_shape = input_shape_images) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 64,  kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 256, kernel_size = c(3, 3), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_conv_2d(filters = 512, kernel_size = c(5, 5), activation = "relu") %>% layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = 256, activation = "relu") %>%
+  layer_dense(units = 512, activation = "relu") %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v5)
+
+model_v5 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+
+history <- model_v5%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v5 <- model_v5 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v5)
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.286      1.451
+
+#### Conclusiones
+
+Los resultados obtenidos modificando la topologı́a de la red y sus hiperparámetros son
+los siguientes:
+
+        Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v1 0.282 1.450 5 adam 29.81 minutos
+Modelo v2 0.284 1.450 5 rmsprop 41.11 minutos
+Modelo v3 0.281 1.459 5 adam 41.15 minutos
+Modelo v4 0.281 1.457 5 adam 30.21 minutos
+Modelo v5 0.286 1.451 5 adam 29.71 minutos
+
+Como se puede observar, no ha habido apenas cambios en el acc, de hecho todos se sitúan
+en el 0.28 acc. Cabe a destacar la diferencia en algunos casos del tiempo de entrenamiento
+empleado.
+
+### 2.3.2 Fine tuning
+
+En esta sección, se va a aplicar la técnica de fine tuning, por la cual se va a coger redes
+convolutivas ya entrenadas para problemas de clasificación de imágenes, y se va a unir
+a una red profunda que se definirá para nuestro problema. Dado que se está utilizando
+keras, se ha utilizado algunos modelos entrenados disponibles, que están definidos en
+https://keras.io/applications/.
+También se mostrará la diferencia que hay entre: si se “congelan”los pesos de la red
+convolutiva ya entrenada, o por el contrario, modificamos dichos pesos al realizar back-
+propagation.
+
+#### Modelo v6
+
+En este modelo se va a utilizar la red application vgg16 como parte convolutiva, y se va
+a congelar los pesos para que no se vean modificados por el backpropagation. El modelo
+es el siguiente:
+
+```{r}
+################################################ MODEL V6 ################################################
+
+
+conv_base <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base)
+
+model_v6 <- keras_model_sequential() %>%
+  conv_base %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v6)
+
+model_v6 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+
+history <- model_v6%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v6 <- model_v6 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v6)  
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.310      1.461
+
+#### Modelo v7
+
+En este modelo se va a utilizar el mismo modelo v6, pero en este caso no se va a congelar
+los pesos. A continuación veremos el resultado que esto implica. El modelo es el siguiente:
+
+```{r}
+conv_base_v7 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+
+model_v7 <- keras_model_sequential() %>%
+  conv_base_v7 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v7)
+
+model_v7 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+
+history <- model_v7%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v7 <- model_v7 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v7)
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.238      12.27
+
+#### Modelo v8
+
+En este caso, se va a utilizar el modelo application inception v3, utilizando la misma
+topologı́a e hiperparámetros de la red profunda que en el modelo v6. El modelo es el
+siguiente:
+
+```{r}
+
+################################################ MODEL V8 ################################################
+
+conv_base_v8 <- application_inception_v3(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva
+freeze_weights(conv_base_v8)
+
+model_v8 <- keras_model_sequential() %>%
+  conv_base_v8 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v8)
+
+model_v8 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+
+history <- model_v8%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v8 <- model_v8 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v8)
+
+```
+
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.307      1.462
+
+#### Modelo v9
+
+En este caso, se va a utilizar el modelo application vgg19, utilizando la misma topologı́a
+e hiperparámetros de la red profunda que en el modelo v6. El modelo es el siguiente:
+
+```{r}
+
+################################################ MODEL V9 ################################################
+
+conv_base_v9 <- application_vgg19(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva
+freeze_weights(conv_base_v9)
+
+model_v9 <- keras_model_sequential() %>%
+  conv_base_v9 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v9)
+
+model_v9 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+
+history <- model_v9%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v9 <- model_v9 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v9)
+
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.304      1.447
+
+#### Modelo v10
+
+En este caso, se va a utilizar el modelo application inception resnet v2, utilizando
+la misma topologı́a e hiperparámetros de la red profunda que en el modelo v6. El modelo
+es el siguiente:
+
+```{r}
+
+################################################ MODEL V10 ################################################
+
+conv_base_v10 <- application_inception_resnet_v2(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva
+freeze_weights(conv_base_v10)
+
+model_v10 <- keras_model_sequential() %>%
+  conv_base_v10 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v10)
+
+model_v10 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adam",
+  metrics = c("accuracy")
+)
+
+history <- model_v10%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v10 <- model_v10 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v10)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.302      1.462
+
+#### Conclusiones
+
+Los resultados obtenidos al hacer fine tuning han sido mejores. Se ha observado que
+utilizar un modelo ya entrenado mejora la predicción en este problema. También se ha
+visto la importancia de congelar los pesos de la red entrenada, ya que por lo contrario,
+la red empeora con mucha diferencia.
+Respecto a los modelos de la sección anterior, estos han dado mejor resultado, entre 0.30
+y 0.31 acc.
+
+          Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v6 0.310 1.461 5 adam 35.65 minutos
+Modelo v7 0.238 12.27 5 adam 51.86 minutos
+Modelo v8 0.307 1.462 5 adam 32.7 minutos
+Modelo v9 0.304 1.447 5 adam 35.3 minutos
+Modelo v10 0.302 1.462 5 adam 41.5 minutos
+
+### 2.3.3 Data augmentation
+
+En esta sección, se va a aplicar la técnica de data agumentation, por la cual se van a
+aplicar una serie de transformaciones a las imágenes de entrenamiento, con el objetivo de
+aumentar el número de imágenes que el modelo procesará.
+
+#### Modelo v11
+
+En este caso, vamos a observar el resultado que se obtiene al aplicar data agumentation
+en un modelo ya construido. Para esto, se ha seleccionado el modelo v1, cuyo estructura
+era la siguiente:
+
+```{r}
+
+################################################ MODEL V11 ################################################
+
+# DATA AUGMENTATION con el mejor modelo sin trasnfer learning, en este caso el modelo 1
+
+#Para generar las transformaciones de las imágenes se ha definido un generador de imágenes
+#al cual se le han atribuido unas serie de atributos para realizar las transformaciones a las
+#imágenes de entrenamiento. La mayorı́a de estos atributos tienen un valor de 0.2 para
+# que la red no se sobrecargue de imágenes parecidas.
+
+data_augmentation_datagen <- image_data_generator(
+  rescale = 1/255,
+  rotation_range = 40,
+  width_shift_range = 0.2,
+  height_shift_range = 0.2,
+  shear_range = 0.2,
+  zoom_range = 0.2,
+  horizontal_flip = TRUE,
+  fill_mode = "nearest"
+)
+
+#A continuación se ha definido un conjunto de entrenamiento, utilizando las imágenes de
+#train, pero indicando que el nuevo generador es el que contiene las definiciones de las
+#transformaciones.
+
+train_augmented_data <- flow_images_from_directory(
+  directory = train_dir,
+  generator = data_augmentation_datagen,  # ¡usando nuevo datagen!
+  target_size = c(150, 150),   # (w, h) --> (150, 150)
+  batch_size = 20,             # grupos de 20 imágenes
+  class_mode = "categorical"        # etiquetas multiclase
+)
+
+history <- model %>% 
+  fit_generator(
+    train_augmented_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  )
+
+test_rate_v11 <- model %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v11)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.281      1.456
+
+#### Modelo v12
+
+Para construir este modelo y aplicar data agumentation, se va a utilizar el modelo v6,
+ya que es el mejor que se ha obtenido hasta el momento, y se observará si al aplicar esta
+técnica, el resultado mejorará o empeorará
+
+```{r}
+
+################################################ MODEL V12 ################################################
+
+# DATA AUGMENTATION con el mejor modelo de transfer learning, es decir el modelo v6
+
+data_augmentation_datagen <- image_data_generator(
+  rescale = 1/255,
+  rotation_range = 40,
+  width_shift_range = 0.2,
+  height_shift_range = 0.2,
+  shear_range = 0.2,
+  zoom_range = 0.2,
+  horizontal_flip = TRUE,
+  fill_mode = "nearest"
+)
+
+train_augmented_data <- flow_images_from_directory(
+  directory = train_dir,
+  generator = data_augmentation_datagen,  # ¡usando nuevo datagen!
+  target_size = c(150, 150),   # (w, h) --> (150, 150)
+  batch_size = 20,             # grupos de 20 imágenes
+  class_mode = "categorical"        # etiquetas multiclase
+)
+
+history <- model_v6 %>% 
+  fit_generator(
+    train_augmented_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  )
+
+test_rate_v12 <- model %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v12)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.281      1.457
+
+#### Conclusiones
+
+Los resultados obtenidos al aplicar este técnica son:
+
+          Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v1 0.281 1.456 5 adam 58.75 minutos
+Modelo v6 0.281 1.457 5 adam 64.33 minutos
+
+Los resultados obtenidos antes de aplicar esta técnica son
+
+          Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v1 0.282 1.450 5 adam 29.81 minutos
+Modelo v6 0.310 1461 5 adam 35.65 minutos
+
+En este caso, aplicar la técnica data augmentation no ha sido efectivo para nuestro
+problema, ya que ha empeorado en resultados y en tiempo de entrenamiento.
+Un motivo por el cual esta técnica no ha funcionado en este caso, puede ser que esta
+técnica es efectiva cuando las imágenes muestran objetos o cosas que son diferentes, es
+decir, en este caso, al tener solo perros o gatos, y tener en cierta medida la misma forma
+(a diferencia de un avión y una silla por ejemplo) el hecho de tener más imágenes no es
+importante.
+
+### 2.3.4 Algoritmos de optimización
+
+En esta sección, se va a utilizar una serie de algoritmos de optimización en el mejor modelo
+que se ha obtenido hasta el momento (modelo v6) y se va a observar su comportamiento.
+Dado que se ha usado el modelo v6 en todos los modelos de esta sección, se va a omitir
+su estructura, ya que ha sido mostrada anteriormente (ver sección 2.3.2).
+
+#### Modelo v13
+
+En este caso, se ha utilizado el algoritmo de optimización SGD como optimizador sobre el
+mejor modelo obtenido hasta el momento (modelo v6).
+
+```{r}
+
+################################################ MODEL V13 ################################################
+
+# Mejor modelo (v6) aplicando algoritmo de optimización SGD.
+
+conv_base_v13 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v13)
+
+model_v13 <- keras_model_sequential() %>%
+  conv_base_v13 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v13)
+
+model_v13 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "sgd",
+  metrics = c("accuracy")
+)
+
+
+history <- model_v13%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v13 <- model_v13 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v13)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.285      1.458
+
+#### Modelo v14
+
+En este caso, se ha utilizado el algoritmo de optimización rmsprop como optimizador
+sobre el mejor modelo obtenido hasta el momento (modelo v6).
+
+```{r}
+
+################################################ MODEL V14 ################################################
+
+# Mejor modelo (v6) aplicando algoritmo de optimización rmsprop.
+
+conv_base_v14 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v14)
+
+model_v14 <- keras_model_sequential() %>%
+  conv_base_v14 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v14)
+
+model_v14 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "rmsprop",
+  metrics = c("accuracy")
+)
+
+
+history <- model_v14%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v14 <- model_v14 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v14)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.318      1.446
+
+#### Modelo v15
+
+En este caso, se ha utilizado el algoritmo de optimización adagrad como optimizador
+sobre el mejor modelo obtenido hasta el momento (modelo v6).
+
+```{r}
+
+################################################ MODEL V15 ################################################
+
+# Mejor modelo (v6) aplicando algoritmo de optimización adagrad.
+
+conv_base_v15 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v15)
+
+model_v15 <- keras_model_sequential() %>%
+  conv_base_v15 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v15)
+
+model_v15%>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adagrad",
+  metrics = c("accuracy")
+)
+
+history <- model_v15%>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v15 <- model_v15 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v15)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.281      11.58
+
+#### Modelo v16
+
+En este caso, se ha utilizado el algoritmo de optimización adadelta como optimizador
+sobre el mejor modelo obtenido hasta el momento (modelo v6).
+
+```{r}
+
+################################################ MODEL V16 ################################################
+
+# Mejor modelo (v6) aplicando algoritmo de optimización adadelta.
+
+conv_base_v16 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v16)
+
+model_v16 <- keras_model_sequential() %>%
+  conv_base_v16 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v16)
+
+model_v16 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adadelta",
+  metrics = c("accuracy")
+)
+
+history <- model_v16 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v16 <- model_v16 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v16)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.314      1.437
+
+#### Modelo v17
+
+En este caso, se ha utilizado el algoritmo de optimización adamax como optimizador sobre
+el mejor modelo obtenido hasta el momento (modelo v6).
+
+```{r}
+
+################################################ MODEL V17 ################################################
+
+# Mejor modelo (v6) aplicando algoritmo de optimización adamax.
+
+conv_base_v17 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v17)
+
+model_v17 <- keras_model_sequential() %>%
+  conv_base_v17 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v17)
+
+model_v17 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adamax",
+  metrics = c("accuracy")
+)
+
+history <- model_v17 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v17 <- model_v17 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v17)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.323      1.445
+
+#### Modelo v18
+
+En este caso, se ha utilizado el algoritmo de optimización nadam como optimizador sobre
+el mejor modelo obtenido hasta el momento (modelo v6).
+
+```{r}
+
+################################################ MODEL V18 ################################################
+
+# Mejor modelo (v6) aplicando algoritmo de optimización nadam.
+
+conv_base_v18 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v18)
+
+model_v18 <- keras_model_sequential() %>%
+  conv_base_v18 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v18)
+
+model_v18 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "nadam",
+  metrics = c("accuracy")
+)
+
+history <- model_v18 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v18 <- model_v18 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v18)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.307      1.475
+
+#### Conclusiones
+
+Los resultados obtenidos modificando el algoritmo de optimización son los siguientes:
+
+           Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v13 0.285 1.458 5 sgd 34.41 minutos
+Modelo v14 0.318 1.446 5 rmsprop 34.11 minutos
+Modelo v15 0.281 11.58 5 adagrad 34.1 minutos
+Modelo v16 0.314 1.437 5 adadelta 34.45 minutos
+Modelo v17 0.323 1.445 5 adamax 34.11 minutos
+Modelo v18 0.307 1.475 5 nadam 34.25 minutos
+
+Como se puede apreciar en la tabla 21, en general se han obtenido resultados dispersos
+aun utilizando la misma topologı́a e hiperparámetros de la red. En este caso, podemos
+observar que los tiempos de entrenamiento son casi idénticos, y que el mejor resultado
+se ha obtenido utilizando el algoritmo de optimización adamax en el modelo
+v17.
+
+### 2.3.5 Early stopping
+
+Otra de las técnicas que se han intentado aplicar a este problema ha sido el del early
+stopping. Esta técnica ha sido usada para identificar el número de época a partir del
+cual un modelo empieza a sobreaprender.
+En este caso, dicha comprobación no se ha hecho programáticamente, sino que se ha
+realizado de forma manual a través de la visualización de la tasa de validation loss
+conforme el número de épocas se va incrementando.
+Para poder identificar cuando la red empieza a sobreaprender, nos vamos a fijar en que
+inicialmente la tasa de validation loss irá decreciendo (esto significa que el modelo va
+mejorando y generalizando mejor), hasta que llegue un punto en el que validation loss
+irá subiendo poco a poco, a pesar de que el loss y acc vayan mejorando. Esta incremento
+de textitvalidation loss significa que el modelo está perdiendo capacidad de generalización,
+y por lo tanto, estará realizando sobreaprendizaje.
+A continuación se va a mostrar el proceso llevado a cabo para intentar detectar este tipo
+de situaciones.
+
+#### Modelo v19
+
+Para construir este modelo, se ha partido de la misma topologı́a e hiperparámetros que
+el modelo v17 (que es el mejor obtenido hasta el momento). Para intentar mejorar
+este modelo, se va a entrenar con 15 épocas, se observará la gráfica de evolución del
+validation loss y se detectará cual puede ser un buen número de épocas para entrenar
+dicho modelo. El modelo es el siguiente:
+
+```{r}
+
+################################################ MODEL V19 ################################################
+
+# Mejor modelo (v17) con 15 iteraciones para aplicar early stopping
+
+conv_base_v19 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v19)
+
+model_v19 <- keras_model_sequential() %>%
+  conv_base_v19 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v19)
+
+model_v19 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adamax",
+  metrics = c("accuracy")
+)
+
+history <- model_v19 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 15,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v19 <- model_v19 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v19)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.308      1.58
+
+El resultado que se obtuvo para 5 épocas fue:
+
+Test acc Test loss 
+0.323   1.445
+
+Tal y como se observan en las anteriores tablas, el resultado obtenido con un entrena-
+miento con 5 épocas es mejor respecto al modelo entrenado con 15. La causa de esto
+puede ser debido al sobreaprendizaje.
+
+(Ver sección 3.3.5 de la documentación de esta práctica para más información)
+
+#### Modelo v20
+
+Para intentar resolver el sobreaprendizaje que se produce en el modelo v19, en este mode-
+lo se va a replicar la misma topologı́a e hiperparámetros que el modelo v19, estableciendo
+2 épocas de entrenamiento.
+
+```{r}
+
+################################################ MODEL V20 ################################################
+
+# Mejor modelo (v17) con 2 iteraciones, tras haber observado de que a partir de la iteración 2 el error va en aumento
+
+conv_base_v20 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v20)
+
+model_v20 <- keras_model_sequential() %>%
+  conv_base_v20 %>%
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v20)
+
+model_v20 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adamax",
+  metrics = c("accuracy")
+)
+
+history <- model_v20 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 2,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v20 <- model_v20 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v20)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.318      1.426
+
+#### Conclusiones
+
+Los resultados son los siguientes:
+
+           Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v19 0.308 1.58 15 adamax 95.55 minutos
+Modelo v20 0.318 1.426 2 adamax 13.65 minutos
+
+Tal y como se puede observar en la tabla 25, aplicando early stopping se ha conseguido
+un buen modelo en un tiempo de entrenamiento muy razonable. De hecho, si se compara
+con el modelo entrenado con 15 épocas, mejora en todos los aspectos.
+Como aspecto a destacar, con este modelo se ha obtenido la tasa de test loss más baja
+de todos los modelos, pero aun ası́, no ha superado (por muy poco) la tasa de test acc
+del mejor modelo obtenido hasta ahora.
+Tal y como pasaba con la técnica de data augmentation, este problema al tener un gran
+tamaño, no se puede especificar un número de épocas alto, por lo que los resultados no
+son tan apreciables como lo serı́a en un problema más pequeño que se entrenara con un
+mayor número de épocas.
+
+### 2.3.6 Dropout
+
+Por último, otra técnica que se ha aplicado para intentar mejorar los modelos ha sido
+dropout.
+Para ello, se ha hecho uso del modelo v17 (mejor modelo hasta el momento) y se han
+añadido una o varias capas de dropout. El principal objetivo que se tiene al aplicar esta
+técnica, es el de evitar que las neuronas aprendan una caracterı́stica en concreto, es decir,
+que se especialicen en un determinado patrón. Lo que se quiere es que el modelo sea lo
+más genérico posible, por lo tanto, dropout desactivará aleatoriamente en cada iteración
+una serie de neuronas con el fin de que el modelo generalice y aprenda mejor.
+Observemos si para este problema en concreto, se puede mejorar el modelo aplicando
+dicha técnica.
+
+#### Modelo v21
+
+Partiendo del modelo v17, se ha construido este modelo añadiendo una capa dropout a
+la red profunda con una tasa de activación de 0.4 (40 %).
+El modelo resultante es el siguiente:
+
+```{r}
+
+################################################ MODEL V21 ################################################
+
+# Mejor modelo (v17) aplicando dropout en la red profunda
+
+conv_base_v21 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v21)
+
+model_v21 <- keras_model_sequential() %>%
+  conv_base_v21 %>%
+  layer_flatten() %>%
+  layer_dropout(rate=0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v21)
+
+model_v21 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adamax",
+  metrics = c("accuracy")
+)
+
+history <- model_v21 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v21 <- model_v21 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v21)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.313      1.427
+
+#### Modelo v22
+
+En este caso, se ha partido del modelo v17 y se ha modificado la parte de red profunda.
+Se han añadido varias capas dense con otras capas dropout enmedio.
+El modelo es el siguiente:
+
+```{r}
+
+################################################ MODEL V22 ################################################
+
+# Mejor modelo (v17) aplicando dropout en la red profunda
+
+conv_base_v22 <- application_vgg16(
+  weights = "imagenet",
+  include_top = FALSE,
+  input_shape = c(150, 150, 3)
+)
+
+# 2. Congelar pesos de la capa convolutiva VGG16 y compilar
+freeze_weights(conv_base_v22)
+
+model_v22 <- keras_model_sequential() %>%
+  conv_base_v22 %>%
+  layer_flatten() %>%
+  layer_dropout(rate=0.4) %>%
+  layer_dense(units = 256, activation = "relu") %>%
+  layer_dropout(rate=0.5) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dense(units = num_classes, activation = "softmax")
+
+summary(model_v22)
+
+model_v22 %>% compile(
+  loss = "categorical_crossentropy",
+  optimizer = "adamax",
+  metrics = c("accuracy")
+)
+
+history <- model_v22 %>% 
+  fit_generator(
+    train_data,
+    steps_per_epoch = 100,
+    epochs = 5,
+    validation_data = validation_data,
+    validation_steps = 50
+  ) 
+
+test_rate_v22 <- model_v22 %>% evaluate_generator(test_data, steps = 5)
+print(test_rate_v22)
+
+```
+
+El resultado obtenido:
+
+Test acc   Test loss
+0.308      1.431
+
+#### Conclusiones
+
+Los resultados obtenidos son los siguientes:
+
+- Aplicando dropout (modelo v21 vs sin dropout modelo v17)
+
+          Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v17 0.323 1.445 5 adamax 34.11 minutos
+Modelo v21 0.313 1.427 5 adamax 34.4 minutos
+
+- Modelo v22 (aplicando dropout )vs mejor modelo modelo v17)
+
+           Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v17 0.323 1.445 5 adamax 34.11 minutos
+Modelo v22 0.308 1.431 5 adamax 33.21 minutos
+
+Tal y como se puede observar en las tablas anteriores, se ha conseguido reducir el
+test loss en ambos modelos aplicando dropout, esto significa que se ha conseguido
+que el modelo generalice mejor, pero aun ası́, no se ha obtenido un mayor acc que en el
+modelo v17.
+Aunque la técnica de dropout suele dar muy buen resultado como técnica de regulariza-
+ción en deep learning, en este caso no ha habido ningún cambio sustancial a la hora de
+mejorar nuestro modelo.
+
+# 3. Discusión de resultados
+
+Los resultados obtenidos con los modelos construidos son:
+
+
+          Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v1 0.282 1.450 5 adam 29.81 minutos
+Modelo v2 0.284 1.450 5 rmsprop 41.11 minutos
+Modelo v3 0.281 1.459 5 adam 41.15 minutos
+Modelo v4 0.281 1.457 5 adam 30.21 minutos
+Modelo v5 0.286 1.451 5 adam 29.71 minutos
+Modelo v6 0.310 1.461 5 adam 35.65 minutos
+Modelo v7 0.238 12.27 5 adam 51.86 minutos
+Modelo v8 0.307 1.462 5 adam 32.7 minutos
+Modelo v9 0.304 1.447 5 adam 35.3 minutos
+Modelo v10 0.302 1.462 5 adam 41.5 minutos
+Modelo v11 0.281 1.456 5 adam 58.75 minutos
+Modelo v12 0.281 1.457 5 adam 64.33 minutos
+Modelo v13 0.285 1.458 5 sgd 34.41 minutos
+Modelo v14 0.318 1.446 5 rmsprop 34.11 minutos
+Modelo v15 0.281 11.58 5 adagrad 34.1 minutos
+Modelo v16 0.314 1.437 5 adadelta 34.45 minutos
+Modelo v17 0.323 1.445 5 adamax 34.11 minutos
+Modelo v18 0.307 1.475 5 nadam 34.25 minutos
+Modelo v19 0.308 1.58 15 adamax 95.55 minutos
+Modelo v20 0.318 1.426 2 adamax 13.65 minutos
+Modelo v21 0.313 1.427 5 adamax 34.4 minutos
+Modelo v22 0.308 1.431 5 adamax 33.21 minutos
+
+Haciendo un balance total de los modelos, vemos que en lı́neas generales se han obtenidos
+valores de acc comprendidos entre 0.28 y 0.32.
+Si hacemos un resumen de los 3 mejores modelos que se han obtenido, tenemos lo siguiente:
+
+           Test acc Test loss N o épocas Algoritmo Tiempo entrenamiento
+Modelo v17 0.323 1.445 5 adamax 34.11 minutos
+Modelo v20 0.318 1.426 2 adamax 13.65 minutos
+Modelo v14 0.318 1.446 5 rmsprop 34.11 minutos
+
+- En primer lugar tenemos el modelo v17 que fue obtenido a través de realizar fine tu-
+ning con la red application vgg16 (importante: y congelando los pesos), añadiendo
+una red profunda simple y aplicando el algoritmo de optimización adamax. Con este
+modelo se ha obtenido el mejor porcentaje de acierto con un 32.3 %.
+
+- En segundo lugar tenemos el modelo v20 que fue obtenido a través de realizar
+early stopping sobre el modelo v17. Este ha sido el modelo que menor tasa de loss
+ha dado con un total de 1.426, y con un valor de acc muy parecido al modelo
+v17. Sin duda, este puede ser el mejor modelo considerando la relación resulta-
+dos/tiempoEntrenamiento.
+
+- En tercer lugar tenemos el modelo v14, también generado a partir de aplicar fine
+tuning (y congelando los pesos), más una red profunda entrenada con el algoritmo
+de optimización rmsprop.
+
+Aparantemente pueden resultar valores muy bajos, pero debido a la complejidad de este
+problema es normal obtener resultados como estos. A simple vista parece difı́cil poder
+clasificar una imagen de un animal para poder predecir cuanto tiempo pasarán para que
+lo adopten, y es que ni nosotros mismos somos capaces de realizar ese proceso a simple
+vista.
+
+# 4. Conclusiones
+
+Como conclusiones generales que se han obtenido al realizar esta práctica, se tiene que:
+
+Al construir la red convolutiva y profunda, modificando su topologı́a e hiperparáme-
+tros, se han obtenido resultados muy similares entre ellos. De hecho el añadir más
+capas o neuronas a la red no significa que ésta mejore, sino que por el
+contrario puede empeorar en resultados y tiempo de entrenamiento.
+Utilizar modelos de clasificación de imágenes ya entrenados y aplicando fine tuning
+congelando los pesos, ha sido efectivo en este caso, ya que se han obtenido
+mejores modelos. De hecho, se ha obtenido mejores resultados que creando redes
+convolutivas propias.
+
+Se ha observado como al aplicar distintos algoritmos de optimización para entrenar
+un mismo modelo ha tenido cierta repercusión en los valores de acc y loss. En este
+caso, el mejor resultado se ha obtenido aplicando el algoritmo adamax.
+Se ha concluido que para este problema de clasificación en concreto, aplicar
+la técnica de data augmentation no tiene efecto, ya que como se ha comentado
+en la sección 3.3.3, en este problema de clasificación las imágenes son muy parecidas
+entre sı́, y el hecho de tener más imágenes para entrenar no significa que vaya
+a mejorar el modelo, como por ejemplo lo harı́a en el caso de clasificar objetos
+diferenciados como sillas, aviones . . .
+
+También, se ha comprobado que al aplicar la técnica early stopping se ha
+conseguido obtener un modelo con la mı́nima tasa de loss y con un
+tiempo de entrenamiento inferior al resto. Sin embargo, no ha conseguido
+obtener el mejor valor de acc (aunque por muy poco). Tal y como se comentó en la
+sección 3.3.5, en este problema no se ha entrenado el modelo con un número alto de
+épocas (debido al tamaño de los datos y su consecuente tiempo de entrenamiento),
+por lo que no se ha podido observar grandes cambios al aplicar dicha técnica, aunque
+se ha observado como un modelo entrenado con pocas épocas (p.e 2 épocas) ha sido
+mejor que otro modelo entrenado con un número mayor de épocas (p.e 15 épocas).
+
+Al aplicar la técnica de dropout no se ha obtenido ninguna mejorı́a signi-
+ficativa en este modelo. Esta técnica suele dar buen resultado en la mayorı́a
+de modelos, pero en este caso, tal y como se ha comentado en la sección 3.3.6 ha
+conseguido reducir el valor de loss respecto a la no aplicación de dropout, pero
+sin embargo, el valor de acc ha disminuido.
+
+Por último, como resultado final de esta práctica, se ha obtenido un valor de acc:
+0.323 y un valor de loss:1.445. Aparentemente este resultado puede ser muy bajo,
+pero tal y como se comentó en la sección 4, es normal debido a que el un problema
+de clasificación complejo que incluso hasta a nosotros mismos nos resultarı́a difı́cil
+hacerlo en la vida real.
+
+# Referencias
+
+[1] Digital Biz, Deep Learning y redes neuronales, 31 mayo, 2018, disponible en https:
+//www.digitalbizmagazine.com/deep-learning-y-redes-neuronales/
+
+[2] Raul E. Lopez Briega, Redes neuronales convolucionales con TensorFlow, 02 agos-
+to, 2016, disponible en https://relopezbriega.github.io/blog/2016/08/02/
+redes-neuronales-convolucionales-con-tensorflow/
+
+[3] Juan Gómez Romero, SIGE2019, Github, disponible en https://github.
+com/jgromero/sige2019/blob/master/pr%C3%A1cticas/04.%20Modelos%
+20avanzados/dogs_cats.R
+
+[4] JJ-Allaire, Deep-Learning-R, Convnets, página 447.

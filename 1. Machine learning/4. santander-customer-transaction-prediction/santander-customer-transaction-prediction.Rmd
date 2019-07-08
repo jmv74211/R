@@ -1,0 +1,1010 @@
+---
+title: "Práctica1_SIGE"
+author: "jmv74211"
+date: "15/4/2019"
+output:
+  pdf_document: 
+    keep_tex: yes
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introducción
+
+En este documento se va a describir el proceso de análisis y resolución del problema de pre-procesamiento y aprendizaje automático propuesto en esta primera práctica.
+
+El conjunto de datos con el que se va a trabajar es una variación del ofrecido en la competición de \textit{Kaggle Santander Customer Transaction Prediction} (\url{https://www.kaggle.com/c/santander-customer-transaction-prediction}).
+
+El problema consiste en predecir si un cliente realizará una transacción en el futuro (\texttt{target}) a partir del resto de variables (200). El conjunto de datos se tratará como un problema de
+clasificación binaria, con dos posibles salidas: \textit{{Yes, No}}.
+
+
+# Librerías
+
+```{r}
+library(tidyverse) # Para cargar y exportar los datos
+library(funModeling) # Para la búsqueda de valores perdidos.
+library(mice) # Para imputación de valores perdidos
+library(dplyr) # Para procesamiento de datos
+
+library(ggplot2) # Para graficar los datos
+library(caret) # Particionamiento de datos, modelos...
+library(partykit)
+library(rattle)
+library(pROC)
+library(DMwR) # Para balanceo de datos
+
+# library(ggthemes) # Para graficar los datos
+# library(scales) # Para graficar los datos
+```
+
+
+\section{2. Exploración de los datos}
+
+\subsection{2.1 Lectura de datos}\label{lectura-de-datos}}
+
+Comenzaremos utilizando el fichero [_train_ok.csv_] proporcionado en esta práctica, donde encontramos un conjunto de 200.000 instancias que tienen 202 características o atributos que se procesarán posteriormente para crear el modelo de predicción.
+
+```{r }
+data_raw <- read_csv('data/train_ok.csv')
+```
+
+Una vez que se ha cargado los datos, lo primero que se ha realizado ha sido comprobar las dimensiones del dataframe que hemos importado.
+
+Como se puede observar en la siguiente salida, las dimensiones de los datos son 200.000 muestras, y cada una tiene un total de 202 características.
+
+```{r eval=FALSE}
+dim(data_raw)
+```
+
+A continuación, dado que el conjunto de datos es demasiado extenso, se ha visualizado las 10 primeras muestras para observar qué características representan, y si podemos deducir a primera vista alguna información o correlación entre dichas variables.
+
+\subsection{2.2 Visualización de datos}
+
+```{r eval=FALSE}
+head(data_raw,10)
+```
+
+Como se ha podido comprobar en los resultados anteriores, los nombres de las variables no son representativos y no nos aportan ningún valor semántico. Si comprobamos los valores de cada una de estas características vemos que son valores continuas.
+
+Seguidamente, se ha visualizado un resumen genérico de los datos para ver si se puede extraer más información.
+
+```{r eval=FALSE}
+summary(data_raw)
+```
+
+Como podemos observar, tampoco se puede extraer información relevante sobre las variables. Cada una de ellas tiene distintos valores numéricos con las que a priori no se puede extraer ninguna información.
+
+\subsection{2.3 Estado del conjunto de datos}
+
+Para observar el estado de los datos, y comprobar si existen valores perdidos, nulos\ldots se ha hecho uso de la librería \texttt{funmodeling} y de la función \texttt{df\_status}.
+
+```{r}
+df_status(data_raw)
+```
+
+Como se puede observar en el resultado anterior, el porcentaje de valores perdidos de todas las variables es sumamente nulo a primera vista.
+
+Si se calcula el mayor y menor porcentaje de todo los datos, se obtiene lo siguiente.
+
+```{r}
+x<-df_status(data_raw)
+
+max_pNA_value <- max(x$p_na)
+min_pNA_value <- min(x$p_na)
+sprintf("El mayor porcentaje de valores perdidos es --> %f",max_pNA_value)
+sprintf("El menor porcentaje de valores perdidos es --> %f",min_pNA_value )
+
+max_pINF_value <- max(x$p_inf)
+min_pINF_value <- min(x$p_inf)
+sprintf("El mayor porcentaje de valores infinitos es --> %f",max_pINF_value)
+sprintf("El menor porcentaje de valores infinitos es --> %f",min_pINF_value)
+```
+
+Como conclusión de los resultados anteriores, podemos observar que el número de valores perdidos es muy poco significativo, ya que el mayor porcentaje de valores perdidos por variable es de un 0.02 %.
+
+Respecto a los valores infinitos, podemos comprobar que el dataset no tiene ningún valor infinito, y como los tipos de las variables son numéricos, no podemos descartar a priori las variables con valor 0.
+
+\subsection{2.4 Balanceo de los datos}
+
+Respecto al balanceo de los datos según nuestro valor objetivo (target), se ha podido comprobar que existe un gran desequilibrio entre el número de datos cuyo target es 1 y 0.
+
+Esto se ha comprobado de la siguiente forma
+
+```{r }
+table(data_raw$target)
+```
+
+Como se puede observar, hay un gran desequilibrio entre dichos valores. Si lo comprobamos mediante porcentajes obtenemos que aproximadamente un 91 % de los datos son transacciones no realizadas y un 9 % de las transacciones son realizadas.
+
+```{r}
+prop.table(table(data_raw$target))
+```
+
+Podemos visualizar esta diferencia gráficamente:
+
+```{r eval=FALSE}
+
+plotdata <-
+  data_raw %>%
+  mutate(target = as.factor(target))
+
+ggplot(plotdata,aes(x=target, fill =  target)) +
+  geom_bar(width = 0.8)+
+      xlab("Realizar transacción")+
+      ylab("Total")+
+      labs(fill = "target")
+```
+
+\subsection{2.5 Conclusión}
+
+Como conclusión general de la exploración de los datos, podemos concluir que \textbf{apenas se puede obtener ninguna información acerca de los datos}, ya que los nombres de las columnas no tienen ningún valor semántico, los valores de las variables son numéricos y continuos, y realizando un resumen de todos los datos, no se puede obtener ningún patrón ni elemento a destacar.
+
+También se ha observado que el dataset no tiene apenas valores perdidos, y \textbf{está considerablemente desbalanceado}.En la etapa de preprocesamiento de los datos habrá que adoptar distintas estrategias para poder intentar balancear dichos datos y eliminar variables que tengan poca relevancia con nuestro objetivo (\texttt{target}).
+
+\section{3. Preprocesamiento}
+
+\subsection{3.1 Limpieza de valores nulos}
+
+Tal y como hemos observado en la exploración de los datos, la cantidad de valores nulos es sumamente pequeña (el porcentaje máximo por variable era del 0.02\%) por lo que se ha optado por eliminar todas aquellas filas que tengan algún valor nulo.
+
+Para ello, vamos a filtrar los datos que tengan valor \texttt{NA}
+
+```{r}
+data <- na.omit(data_raw)
+```
+
+Si observamos la dimensión de los nuevos datos, podemos comprobar que se han eliminado 3959 filas.
+
+```{r}
+dim(data)
+```
+
+
+Ahora, si volvemos a comprobar el porcentaje de valores nulos de los datos, efectivamente observamos que el porcentaje es del 0\%.
+
+```{r}
+x<-df_status(data)
+max_pNA_value <- max(x$p_na)
+sprintf("El mayor porcentaje de valores perdidos es --> %f",max_pNA_value)
+```
+
+\textit{\textbf{Nota}}:
+Antes de tomar esta decisión, también se ha pensado en utilizar la librería \texttt{MICE} para realizar la imputación de dichos valores perdidos, pero dadas las dimensiones de nuestros datos y la cantidad de valores perdidos, se ha llegado a la conclusión de que \textbf{NO} vale la pena emplear un considerable tiempo de cálculo para imputar dichos valores perdidos.
+
+\subsection{3.2 Búsqueda de correlaciones}
+
+Una de las técnicas que se va a utilizar para reducir el número de variables es eliminar las variables menos correlacionadas con nuestra variable objetivo \texttt{target}.
+
+Para ello, en primer lugar se ha generado una tabla de \textbf{correlaciones entre nuestra variable objetivo \texttt{target} y el resto}.
+
+```{r}
+cor_target <-correlation_table(data_raw, target='target')
+cor_target
+```
+
+Como se puede observar, \textbf{no existe ninguna variable que esté altamente correlacionada} con nuestra variable objetivo \texttt{target}, por lo que a priori no podemos destacar una gran importancia de ninguna variable.
+
+A continuación, se va a seleccionar las 100 variables que tengan mayor correlación con la variable objetivo \texttt{target} y se eliminará el resto
+
+\textit{\textbf{Nota}}:
+El número 100 se ha escogido aleatoriamente para reducir el número de variables. Más adelante se irá aumentando o decrementando este número para observar el comportamiento del modelo en función de este parámetro.
+
+Para la selección de las 100 variables más correladas, se escogerán los mayores valores en valor absoluto.
+
+En primer lugar, se ordenan las variables de forma decreciente por valor absoluto.
+
+```{r}
+cor_target <-correlation_table(data, target='target') %>%
+    arrange(-abs(target))
+
+cor_target
+
+```
+
+El número de variables que tenemos hasta este momento es de 201.
+
+```{r}
+dim(cor_target)
+```
+
+A continuación, se establece un parámetro de corte (en este caso 100, tal y como se ha comentado anteriormente) y acotamos el número de variables descartando las 100 primeras y almacenando el resto.
+
+Como se puede comprobar, el número de variables que se van a descartar es de 100.
+
+```{r}
+split_parameter <- 100 # Parámetro para determinar el punto de corte
+cor_target <- cor_target[(split_parameter+1):length(cor_target),]
+dim(cor_target)
+```
+
+Finalmente, se eliminan dichas variables del conjunto de datos y resultamos con un total de 102 columnas.
+
+```{r}
+data <- data %>%
+  select(-one_of(cor_target$Variable))
+
+dim(data)
+```
+
+\subsection{3.3 Borrado de columnas no útiles}
+
+Tras eliminar las columnas poco correladas con nuestra variable objetivo \texttt{target}, se ha procedido a eliminar columnas que no nos van a aportar información relevante a la hora de generar el modelo de predicción.
+
+En primer lugar, se ha `protegido' la variable objetivo \texttt{target} para que no sea procesada por los siguientes procedimientos de filtrado.
+
+El primer filtro que se ha realizado ha sido el de seleccionar las filas cuyos valores sean distintos en una proporción del 70\%.
+
+Observamos como se han seleccionado un total de 26 columnas.
+
+```{r}
+
+status <- df_status(data)
+
+status <- status %>%
+  filter(variable != 'target')
+
+dif_cols <- status %>%
+  filter(unique > 0.7 * nrow(data)) %>%
+  select(variable)
+
+dim(dif_cols)
+
+```
+
+El siguiente filtro que se ha utilizado ha sido el de seleccionar valores con muy poca variabilidad, en concreto se ha establecido un valor del 5\%.
+
+En este caso, se han seleccionado 2 columnas.
+
+```{r}
+eq_cols <- status %>%
+  filter(unique < 0.05 * nrow(data)) %>%
+  select(variable)
+
+dim(eq_cols)
+
+```
+
+En último lugar, se ha aplicado un filtro para eliminar las columnas cuyos valores tengan un 90\% o más de ceros.
+
+Como se puede observar, no ha habido ninguna selección de este tipo.
+
+```{r}
+zero_cols <- status %>%
+  filter(p_zeros > 0.9 * nrow(data)) %>%
+  select(variable)
+
+dim(zero_cols)
+
+```
+
+A continuación se ha procedido a eliminar del conjunto de datos todas estas columnas seleccionadas.
+
+Como se puede observar, hemos reducido el número de columnas a \textbf{74}.
+
+```{r}
+# Eliminar columnas
+remove_cols <- bind_rows(
+  list(
+    zero_cols,
+    eq_cols,
+    dif_cols
+  )
+)
+
+data <- data%>%
+  select(-one_of(remove_cols$variable))
+
+dim(data)
+```
+
+\subsection{3.4 Balanceo de datos}
+
+Tal y como se ha podido observar en la figura \ref{fig:histogramaDesbalance}, existe un gran desequilibrio en la clase \texttt{target} objetivo.
+
+Con el fin de poder mejorar nuestro modelo de aprendizaje, se ha realizado un balanceo de datos utilizando la función \texttt{SMOTE} de la librería \texttt{DMwR}.
+
+En este caso, se ha decidido realizar 3 tipos de balanceos diferentes para ir comparando posteriormente sus comportamientos en los diferentes modelos de aprendizaje. 
+
+
+```{r EVAL=false}
+# data_1.1 <- SMOTE(target~., as.data.frame(data), perc.over=100)
+# data_3.1 <- SMOTE(target~., as.data.frame(data), perc.over=300, dataperc.under=100)
+# data_5.1 <- SMOTE(target~., as.data.frame(data), perc.over=500, dataperc.under=100)
+
+data_1.1  <- read_csv('data/data_smoted1-1_preprocessed.csv')
+data_3.1 <- read_csv('data/data_smoted3-1_preprocessed.csv')
+data_5.1 <- read_csv('data/data_smoted5-1_preprocessed.csv')
+
+plotdata1.1 <-
+   data_1.1 %>%
+   mutate(target = as.factor(target))
+
+plotdata3.1 <-
+    data_3.1 %>%
+    mutate(target = as.factor(target))
+
+plotdata5.1 <-
+    data_5.1 %>%
+    mutate(target = as.factor(target))
+
+ggplot(plotdata1.1,aes(x=target, fill =  target)) +
+     geom_bar(width = 0.8)+
+         xlab("Realizar transacción")+
+         ylab("Total")+
+         labs(fill = "target")
+
+ggplot(plotdata3.1,aes(x=target, fill =  target)) +
+     geom_bar(width = 0.8)+
+         xlab("Realizar transacción")+
+         ylab("Total")+
+         labs(fill = "target")
+
+ggplot(plotdata5.1,aes(x=target, fill =  target)) +
+     geom_bar(width = 0.8)+
+         xlab("Realizar transacción")+
+         ylab("Total")+
+         labs(fill = "target")
+```
+
+
+
+En primer lugar, tenemos un balanceo equitativo entre las clases. Esto se ha realizado utilizando el parámetro \texttt{perc.over=100}
+
+
+```{r}
+# Almacenar datos
+# write_csv(data, 'data/data_preprocessed_unbalanced.csv')
+# write_csv(data1.1, 'data/data_smoted1-1_preprocessed.csv')
+# write_csv(data_3.1, 'data/data_smoted3-1_preprocessed.csv')
+# write_csv(data_5.1, 'data/data_smoted5-1_preprocessed.csv')
+
+```
+
+
+Tras realizar el balanceo, vamos a observar la nueva dimensión de los datos
+
+```{r}
+dim(data_1.1) 
+```
+
+Como podemos observar, se han reducido los datos considerablemente de 196041 a 70656. Este cambio ha sido debido a que se ha realizado un \textit{downsampling} de la clase mayoritaria y un \textit{upsampling} de la clase minoritaria hasta equilibrarse ambos.
+
+
+Si mostramos la gráfica:
+
+
+```{r}
+
+ggplot(plotdata1.1,aes(x=target, fill =  target)) +
+  geom_bar(width = 0.8)+
+      xlab("Realizar transacción")+
+      ylab("Total")+
+      labs(fill = "target")
+
+```
+
+
+El segundo balanceo que se ha realizado ha sido estableciendo los parámetros a \texttt{perc.over=300, dataperc.under=100}. De esta forma obtenemos un \textit{upsampling} y \textit{downsampling} más moderado obteniendo la siguiente proporción:
+
+```{r}
+
+ggplot(plotdata3.1,aes(x=target, fill =  target)) +
+  geom_bar(width = 0.8)+
+      xlab("Realizar transacción")+
+      ylab("Total")+
+      labs(fill = "target")
+
+```
+
+Si observamos la nueva dimensión de estos datos observamos que tenemos una dimensión parecida a la que se tenía inicialmente antes de aplicar dicho balanceo.
+
+```{r}
+dim(data_3.1) 
+```
+
+Por último, se ha realizado un nuevo balanceo estableciendo como parámetros \texttt{perc.over=500, dataperc.under=100}.
+
+```{r}
+
+ggplot(plotdata5.1,aes(x=target, fill =  target)) +
+  geom_bar(width = 0.8)+
+      xlab("Realizar transacción")+
+      ylab("Total")+
+      labs(fill = "target")
+
+```
+
+En este nuevo balanceo, observamos como se mantiene un poco la misma proporción respecto al balanceo anterior (aunque en este caso es inferior), pero se ha aumentado el número de muestras considerablemente.
+
+```{r}
+dim(data_5.1) 
+```
+
+Estos conjuntos de datos que se han generado como resultado del balanceo, serán testeados a la hora de generar los modelos de predicción para observar su comportamiento.
+
+Como resumen de este apartado, observamos como inicialmente teníamos un conjunto \textbf{totalmente desbalanceado} y aplicando este proceso se han obtenido varios conjuntos de datos con distintas muestras y proporción entre clases.En la siguiente figura podemos ver los distintos cambios.
+
+
+\subsection{3.6 Reordenación de los datos}
+
+Otra medida que se ha llevado a cabo en el preprocesamiento, ha sido el de \textbf{reordenar} los datos. 
+
+Considero que esta es una buena práctica, debido a que puede que los datos estén ordenados por alguna etiqueta y que al realizar la partición de los datos en los conjuntos de entrenamiento y validación, el modelo de aprendizaje no generalice lo suficiente o que el conjunto de validación esté totalmente desbalanceado.
+
+Por este motivo, he decidido `barajar' los datos, de forma que el reparto de éstos sea de forma aleatoria y que el modelo de aprendizaje no aprenda según el orden, sino que generalice lo máximo posible.
+
+```{r}
+# Semilla de aleatoriedad
+set.seed(7)
+
+head(data,5)
+
+# Aleatorizar filas
+data <- data[sample(1:nrow(data)), ]
+data_1.1 <- data_1.1[sample(1:nrow(data_1.1)), ]
+data_3.1 <- data_3.1[sample(1:nrow(data_3.1)), ]
+data_5.1 <- data_5.1[sample(1:nrow(data_5.1)), ]
+
+head(data,5)
+
+```
+
+\subsection{3.5 Transformaciones de columnas}
+
+Para poder trabajar posteriormente en la construcción del modelo de predicción, es necesario convertir la variable objetivo \texttt{target} en una variable de tipo factor.
+
+Para ello, lo que se ha hecho ha sido sustituir todos los valores 0 en No y los valores un en Si.
+
+```{r}
+# Conversión de target de numérico a factor
+data <- data%>%
+  mutate(target = as.factor(ifelse(target== 1, 'Yes', 'No')))
+data_1.1  <- data_1.1 %>%
+  mutate(target = as.factor(ifelse(target== 1, 'Yes', 'No')))
+data_3.1  <- data_3.1 %>%
+  mutate(target = as.factor(ifelse(target== 1, 'Yes', 'No')))
+data_5.1  <- data_5.1 %>%
+  mutate(target = as.factor(ifelse(target== 1, 'Yes', 'No')))
+
+summary(data)
+```
+
+
+\section{4. Clasificación}
+
+Una vez que se ha realizado el preprocesamiento de los datos, ya estamos preparados para construir modelos de aprendizaje automático realizado una serie de técnicas.
+
+Para realizar esto y cumpliendo con las propuestas del guión de prácticas, se va a utilizar la librería \texttt{caret}, ya que nos proporciona una serie de métodos que nos facilita la construcción y validación de varios modelos de aprendizaje.
+
+Durante la construcción de los modelos de aprendizaje, se han realizado una gran cantidad de pruebas en las que se han ido modificando parámetros y evaluando los resultados para obtener unas conclusiones acerca de la predicción de datos.
+
+Concretamente, las pruebas que se van a especificar a continuación se han realizado para los modelos \textbf{rpart} y \textbf{rf} de la librería de caret que se corresponde con los métodos de clasificación llamados árboles de regresión y random forest. Decir que también se han estado realizando pruebas con el modelo \textbf{svm}, pero que desafortunadamente no se ha obtenido ningún resultado, ya que el tiempo de procesamiento de dicho algoritmo ha sido bastante elevado hasta el punto de tener que cancelar su ejecución.
+
+Antes de empezar a construir los modelos de aprendizaje, se ha procedido a particionar el conjunto de datos en dos: \textit{Entrenamiento y test}. El conjunto de entrenamiento dispone del 80\% del total de los datos, y el conjunto de test tiene el 20\% restante.
+
+```{r}
+# Particiones entrenamiento / test
+trainIndex <- createDataPartition(data$target, p = .8, list = FALSE, times = 1)
+data_train <- data[ trainIndex, ] 
+data_test   <- data[-trainIndex, ]
+
+trainIndex <- createDataPartition(data_1.1$target, p = .8, list = FALSE, times = 1)
+data_train_1.1 <- data_1.1[ trainIndex, ] 
+data_test_1.1   <- data_1.1[-trainIndex, ]
+
+trainIndex <- createDataPartition(data_3.1$target, p = .8, list = FALSE, times = 1)
+data_train_3.1 <- data_3.1[ trainIndex, ] 
+data_test_3.1   <- data_3.1[-trainIndex, ]
+
+trainIndex <- createDataPartition(data_5.1$target, p = .8, list = FALSE, times = 1)
+data_train_5.1 <- data_5.1[ trainIndex, ] 
+data_test_5.1   <- data_5.1[-trainIndex, ]
+
+```
+
+
+```{r}
+dim (data_train)
+dim(data_test)
+```
+
+
+\subsection*{Clasificación de datos no balanceados}
+
+En primer lugar, se han estado realizando análisis sobre los datos preprocesados quitando la etapa de balanceamiento. El principal motivo de esta decisión es tener una primera toma de contacto sobre el comportamiento de los modelos teniendo en cuenta el alto grado de desbalance que hay.
+
+El primer modelo que se ha generado ha sido utilizando \texttt{rpart} como 
+método de entrenamiento y \texttt{ROC} como métrica de validación.
+
+```{r}
+# Parámetros
+rpartCtrl <- trainControl(verboseIter = F, classProbs = TRUE,
+                          summaryFunction = twoClassSummary)
+
+rpartParametersGrid <- expand.grid(.cp = c(0.01, 0.05,0.1))
+
+# Entrenamiento del modelo
+rpartModel <- train(target~ ., data = data_train, method = "rpart",
+                    metric = "ROC", trControl = rpartCtrl, 
+                    tuneGrid = rpartParametersGrid)
+
+# Validación
+predictionValidationProb_rpart <- predict(rpartModel, 
+                                          data_test, type = "prob")
+auc_rpart <- roc(data_test$target, predictionValidationProb_rpart[["Yes"]],
+                 levels = unique(data_test[["target"]]))
+auc_rpart
+roc_validation_rpart <- plot.roc(auc_rpart, ylim=c(0,1), type = "S" ,
+                                 print.thres = T, main=paste('Validation AUC:',
+                                 round(auc_rpart$auc[[1]], 2)))
+
+# Predicción y matriz de confusión
+prediction_rpart <- predict(rpartModel, data_test, type = "raw") 
+confusion_matrix_rpart <- confusionMatrix(table(prediction_rpart, 
+                                                data_test[["target"]])) 
+confusion_matrix_rpart
+
+# Visualización del modelo
+rpartModel_party <- as.party(rpartModel$finalModel)
+plot(rpartModel_party)
+fancyRpartPlot(rpartModel$finalModel)
+
+saveRDS(rpartModel, "./modelos/rpart_model_unbalanced.rds")
+#readRDS("./modelos/rpart_model.rds")
+```
+
+
+Los resultados que se han obtenido con este modelo son relativamente malos. Como se puede observar, el área bajo la curva ha sido de 0.5, y como se puede observar en la matriz de confusión, vemos el 100\% de sus predicciones ha sido la respuesta `NO' o 0.
+
+```{r}
+roc_validation_rpart 
+```
+
+
+El principal motivo por el cual el modelo siempre predice que no, es que \textbf{hay un gran desbalance entre las clases de los datos}, y es por ello que el modelo no se ha entrenado correctamente y siempre predice la clase mayoritaria. Esto era previsible y por ello se ha tenido esta consideración en el preprocesamiento y se han generado conjuntos de datos adicionales balanceados más equitativamente.
+
+
+```{r}
+confusion_matrix_rpart
+```
+
+Tras esta prueba, se ha vuelto a construir otro modelo utilizando \textbf{rf} de \texttt{caret}.
+
+```{r eval=FALSE}
+ # RANDOMFOREST
+
+## https://machinelearningmastery.com/tune-machine-learning-algorithms-in-r/
+
+# Parámetros
+control_rf <- trainControl(method="none", number=3, 
+                           repeats=1, search="random",classProbs = TRUE)
+mtry <- sqrt(ncol(data_train))
+
+# Entrenamiento
+rfModel <- train(target~., data=data_train, method="rf", 
+                 metric="ROC", trControl=control_rf,ntree=50)
+
+# Predicciones y validación
+
+predictionValidationProb_rf <- predict(rfModel, 
+                                       data_test, type = "prob") 
+
+auc_rf <- roc(data_test$target, predictionValidationProb_rf[["Yes"]], 
+              levels = unique(data_test[["target"]]))
+auc_rf
+roc_validation <- plot.roc(auc_rf, ylim=c(0,1), type = "S" ,
+                           print.thres = T, main=paste('Validation AUC:',
+                                                       round(auc_rf$auc[[1]], 2)))
+
+# Matriz de confusión
+prediction_rforest<- predict(rfModel, data_test, type = "raw") 
+confusion_matrix_rf<- confusionMatrix(table(prediction_rforest, 
+                                            data_test[["target"]])) 
+confusion_matrix_rf
+
+
+saveRDS(rfModel, "./modelos/rforest_50_model_unbalanced.rds")
+#readRDS("./modelos/rpart_model.rds")
+
+```
+
+
+```{r}
+# SVM
+# svmCtrl <- trainControl(verboseIter = F, classProbs = TRUE, method = "repeatedcv", number = 10, repeats = 1, summaryFunction = twoClassSummary)
+# svmModel <- train(target ~ ., data = data_train, method = "svmRadial", metric = "ROC", trControl = svmCtrl, tuneLength = 10)
+# print(svmModel)
+# plot(svmModel)
+# my_roc(val, predict(svmModel, val, type = "prob"), "Class", "Good")
+```
+
+\subsection*{Clasificación de datos balanceados al 50\%}
+
+En este caso, se va a proceder a describir el mismo procedimiento que se ha seguido con los datos desbalanceados y se va a comentar los cambios que ha habido en los resultados.
+
+En primer lugar, se ha generado el modelo usando \texttt{rpart} y la métrica de validación \texttt{ROC}. Igual que en el caso anterior, se ha establecido un grid de parámetros para que se vaya probando a generar el modelo utilizando distintos valores de \texttt{cp}.
+
+```{r}
+# Parámetros
+rpartCtrl <- trainControl(verboseIter = F, classProbs = TRUE,
+                          summaryFunction = twoClassSummary)
+
+rpartParametersGrid <- expand.grid(.cp = c(0.01, 0.05,0.1))
+
+# Entrenamiento del modelo
+rpartModel <- train(target~ ., data = data_train_1.1, method = "rpart",
+                    metric = "ROC", trControl = rpartCtrl, 
+                    tuneGrid = rpartParametersGrid)
+
+# Validación
+predictionValidationProb_rpart <- predict(rpartModel, 
+                                          data_test_1.1, type = "prob")
+auc_rpart <- roc(data_test_1.1$target, predictionValidationProb_rpart[["Yes"]],
+                 levels = unique(data_test_1.1[["target"]]))
+auc_rpart
+roc_validation_rpart <- plot.roc(auc_rpart, ylim=c(0,1), type = "S" ,
+                                 print.thres = T, main=paste('Validation AUC:',
+                                 round(auc_rpart$auc[[1]], 2)))
+
+# Predicción y matriz de confusión
+prediction_rpart <- predict(rpartModel, data_test_1.1, type = "raw") 
+confusion_matrix_rpart <- confusionMatrix(table(prediction_rpart, 
+                                                data_test_1.1[["target"]])) 
+confusion_matrix_rpart
+```
+
+Como se puede observar, ahora el resultado ha cambiado respecto a la prueba anterior. En este caso el valor AUC ha mejorado pero aún no sigue siendo bueno.
+
+Sin embargo, podemos comprobar en la matriz de confusión que en esta vez si ha intentado predecir considerablemente el valor \textit{Yes} (Obvio debido a que en este caso, tenemos el mismo número de muestras tanto de \textit{yes} como no \textit{no}).
+
+
+También se puede observar las variables más importantes por las que el modelo ha realizado la clasificación.
+
+```{r}
+# Visualización del modelo
+rpartModel_party <- as.party(rpartModel$finalModel)
+plot(rpartModel_party)
+fancyRpartPlot(rpartModel$finalModel)
+```
+
+Observando la figura anterior, vemos que el modelo ha realizado la primera partición teniendo en cuenta el valor de la variable 31 y 12, y así sucesivamente con el resto de valores.
+
+A continuación, se ha probado a construir un modelo \texttt{rf}(randomForest).
+
+```{r}
+ # RANDOMFOREST
+
+# Parámetros
+control_rf <- trainControl(method="none", number=3, 
+                           repeats=1, search="random",classProbs = TRUE)
+mtry <- sqrt(ncol(data_train_1.1))
+
+# Entrenamiento
+rfModel <- train(target~., data=data_train_1.1, method="rf", 
+                 metric="ROC", trControl=control_rf,ntree=50)
+
+# Predicciones y validación
+
+predictionValidationProb_rf <- predict(rfModel, 
+                                       data_test_1.1, type = "prob") 
+
+auc_rf <- roc(data_test_1.1$target, predictionValidationProb_rf[["Yes"]], 
+              levels = unique(data_test_1.1[["target"]]))
+auc_rf
+roc_validation <- plot.roc(auc_rf, ylim=c(0,1), type = "S" ,
+                           print.thres = T, main=paste('Validation AUC:',
+                                                       round(auc_rf$auc[[1]], 2)))
+
+# Matriz de confusión
+prediction_rforest<- predict(rfModel, data_test_1.1, type = "raw") 
+confusion_matrix_rf<- confusionMatrix(table(prediction_rforest, 
+                                            data_test_1.1[["target"]])) 
+confusion_matrix_rf
+```
+
+En este caso podemos comprobar como el modelo ha mejorado sustancialmente en su efectividad. Pasamos de tener un valor \textbf{0.56} usando \texttt{rpart} a \textbf{0.83} usando \texttt{rf}.
+
+Si comprobamos la matriz de confusión, vemos como en este caso las predicciones entre clases están repartidas y son más acertadas.
+
+\subsection*{Clasificación de datos balanceados al 60-40\%}
+
+Este nuevo conjunto de datos tiene un balance del 60\% de la clase  \textit{No} y un 40\% de la clase  \textit{yes}.
+
+A continuación se va a observar el comportamiento de este balance respecto a los modelos de predicción anteriormente descritos utilizando los mismos parámetros.
+
+Comentar en primer lugar, que el resultado obtenido utilizando \texttt{rpart} ha sido extraño, ya que la proporción del balance es parecida al modelo anterior y los resultados son diferentes.
+
+```{r}
+# Parámetros
+rpartCtrl <- trainControl(verboseIter = F, classProbs = TRUE,
+                          summaryFunction = twoClassSummary)
+
+rpartParametersGrid <- expand.grid(.cp = c(0.01, 0.05,0.1))
+
+# Entrenamiento del modelo
+rpartModel <- train(target~ ., data = data_train_3.1, method = "rpart",
+                    metric = "ROC", trControl = rpartCtrl, 
+                    tuneGrid = rpartParametersGrid)
+
+# Validación
+predictionValidationProb_rpart <- predict(rpartModel, 
+                                          data_test_3.1, type = "prob")
+auc_rpart <- roc(data_test_3.1$target, predictionValidationProb_rpart[["Yes"]],
+                 levels = unique(data_test_3.1[["target"]]))
+auc_rpart
+roc_validation_rpart <- plot.roc(auc_rpart, ylim=c(0,1), type = "S" ,
+                                 print.thres = T, main=paste('Validation AUC:',
+                                 round(auc_rpart$auc[[1]], 2)))
+
+# Predicción y matriz de confusión
+prediction_rpart <- predict(rpartModel, data_test_3.1, type = "raw") 
+confusion_matrix_rpart <- confusionMatrix(table(prediction_rpart, 
+                                                data_test_3.1[["target"]])) 
+confusion_matrix_rpart
+```
+
+Como se puede observar en la figura anterior, el modelo ha vuelto a predecir en todas las ocasiones el valor \textit{No}.
+
+Sin embargo, empleando el método \textbf{rf} se han obtenido resultados bastantes buenos.
+
+```{r}
+ # RANDOMFOREST
+
+# Parámetros
+control_rf2 <- trainControl(method="none", number=3, repeats=1, search="random",classProbs = TRUE)
+mtry <- sqrt(ncol(data_train_3.1))
+
+# Entrenamiento
+rfModel2 <- train(target~., data=data_train_3.1, method="rf", metric="ROC", trControl=control_rf2,ntree=200)
+
+# Predicciones y validación
+
+predictionValidationProb_rf <- predict(rfModel2, data_test_3.1, type = "prob") 
+auc_rf <- roc(data_test_3.1$target, predictionValidationProb_rf[["Yes"]], levels = unique(data_test_3.1[["target"]]))
+auc_rf
+roc_validation <- plot.roc(auc_rf, ylim=c(0,1), type = "S" , print.thres = T, main=paste('Validation AUC:', round(auc_rf$auc[[1]], 2)))
+
+# Matriz de confusión
+prediction_rforest<- predict(rfModel2, data_test_3.1, type = "raw") 
+confusion_matrix_rf<- confusionMatrix(table(prediction_rforest, data_test_3.1[["target"]])) 
+confusion_matrix_rf
+
+saveRDS(rfModel2, "./modelos/bestModel096.rds")
+
+```
+
+Como resultado se ha obtenido un valor de \textbf{0.96} de \texttt{AUC} y un \textbf{89\%} de \texttt{acc}.
+
+Este mismo modelo se ha testado con los data\_test de \texttt{kaggle}. En primer lugar se han descargado los datos de \url{https://www.kaggle.com/c/santander-customer-transaction-prediction/data)} y se ha cargado. 
+
+Una vez se ha cargado el conjunto de test, se ha procedido a predecir la variable objetivo \texttt{target} y a almacenar dichos datos en un fichero \textit{submission} formateado para subirlo a kaggle y observar la puntuación. El código que se ha empleado para ello es el siguiente:
+
+```{r}
+rfModel2 <- readRDS("./modelos/bestModel096.rds")
+# Kaggle test
+
+# Se cargan los datos
+kaggle_test <- read_csv('data/kaggle_test.csv')
+
+# Comprobamos la dimensión de los datos de test
+dim(kaggle_test)
+
+# Obtenemos la columna de ID_code
+submission_id <-kaggle_test$ID_code 
+
+# Se realiza la predicción para el conjunto kaggle_test
+prediction_rforest<- predict(rfModel2, kaggle_test, type = "raw") 
+
+# Se crea un dataframe con las columnas de ID_code y target
+submission <- data.frame(submission_id,prediction_rforest)
+
+# Se modifica el nombre a las columnas, ya que por defecto coge el nombre de las variables anteriores
+colnames(submission)<-c("ID_code", "target")
+
+# Se modifica la predicción Yes/No a 1/0
+submission <- submission %>%
+  mutate(target=as.numeric(ifelse(target == 'Yes',1,0)))
+
+# Observamos el número de predicciones positivas y negativas
+table(submission$target)
+prop.table(table(submission$target))
+
+# Se almacenan las predicciones formatedas en un fichero listo para enviar a kaggle.
+write_csv(submission, 'data/sample_submission.csv')
+
+```
+
+Tras subir el fichero \textit{sample\_submission.csv} a \texttt{kaggle} se ha obtenido una puntuación de \textbf{0.5}.
+
+\subsection*{Clasificación de datos balanceados al 62-38\%}
+
+Este nuevo ejemplo de balanceo tiene un porcentaje similar al anterior (60-40\%), pero como se comentó anteriormente en la etapa de preprocesamiento, la función SMOTE ha añadido una gran cantidad de muestras de ambas clases, y se ha pasado de tener una cantidad de 176640 a 282624 muestras respecto al conjunto anterior. El objetivo de este análisis es ver como se comporta el modelo ante estos nuevos cambios.
+
+En primer lugar, se ha construido un modelo con \textbf{rpart}. En este caso ha ocurrido como en el caso de los datos desbalanceados y datos con balance 60-40\%. El modelo no ha generalizado correctamente y ha dado a todas las predicciones el valor 0.
+
+```{r eval=FALSE}
+# Parámetros
+rpartCtrl <- trainControl(verboseIter = F, classProbs = TRUE,
+                          summaryFunction = twoClassSummary)
+
+rpartParametersGrid <- expand.grid(.cp = c(0.01, 0.05,0.1))
+
+# Entrenamiento del modelo
+rpartModel <- train(target~ ., data = data_train_5.1, method = "rpart",
+                    metric = "ROC", trControl = rpartCtrl, 
+                    tuneGrid = rpartParametersGrid)
+
+# Validación
+predictionValidationProb_rpart <- predict(rpartModel, 
+                                          data_test_5.1, type = "prob")
+auc_rpart <- roc(data_test_5.1$target, predictionValidationProb_rpart[["Yes"]],
+                 levels = unique(data_test_5.1[["target"]]))
+auc_rpart
+roc_validation_rpart <- plot.roc(auc_rpart, ylim=c(0,1), type = "S" ,
+                                 print.thres = T, main=paste('Validation AUC:',
+                                 round(auc_rpart$auc[[1]], 2)))
+
+# Predicción y matriz de confusión
+prediction_rpart <- predict(rpartModel, data_test_5.1, type = "raw") 
+confusion_matrix_rpart <- confusionMatrix(table(prediction_rpart, 
+                                                data_test_5.1[["target"]])) 
+confusion_matrix_rpart
+
+# Visualización del modelo
+rpartModel_party <- as.party(rpartModel$finalModel)
+plot(rpartModel_party)
+fancyRpartPlot(rpartModel$finalModel)
+
+```
+
+Sin embargo, se ha obtenido un buen resultado utilizando el método \textbf{rf}.
+
+
+```{r eval=FALSE}
+ # RANDOMFOREST
+
+# Parámetros
+control_rf <- trainControl(method="none", number=3, 
+                           repeats=1, search="random",classProbs = TRUE)
+mtry <- sqrt(ncol(data_train_5.1))
+
+# Entrenamiento
+rfModel <- train(target~., data=data_train_5.1, method="rf", 
+                 metric="ROC", trControl=control_rf,ntree=200)
+
+# Predicciones y validación
+
+predictionValidationProb_rf <- predict(rfModel, 
+                                       data_test_5.1, type = "prob") 
+
+auc_rf <- roc(data_test_5.1$target, predictionValidationProb_rf[["Yes"]], 
+              levels = unique(data_test_5.1[["target"]]))
+auc_rf
+roc_validation <- plot.roc(auc_rf, ylim=c(0,1), type = "S" ,
+                           print.thres = T, main=paste('Validation AUC:',
+                                                       round(auc_rf$auc[[1]], 2)))
+
+# Matriz de confusión
+prediction_rforest<- predict(rfModel, data_test_5.1, type = "raw") 
+confusion_matrix_rf<- confusionMatrix(table(prediction_rforest, 
+                                            data_test_5.1[["target"]])) 
+confusion_matrix_rf
+
+```
+Como podemos observar, la curva ROC es bastante buena, con un valor de \texttt{auc} de \textbf{0.98} 
+
+Si miramos la matriz de confusión, se puede comprobar que en general ha realizado muy buenas predicciones con un acierto del \textbf{92.5\%}.
+
+Este nuevo modelo se ha utilizado para realizar el test de kaggle y tras subirlo se ha obtenido un resultado de 0.501  (similar a la vez anterior).
+
+\subsection*{Métodos y pruebas adicionales}
+
+Con fin de que la documentación no sea muy extensa, se ha obviado muchas pruebas que se han ido testeando con diferentes parámetros y métodos alternativos.
+
+A continuación se muestra el código de los métodos alternativos que se han usado para construir el modelo de aprendizaje y los resultados obtenidos.
+
+\textbf{Linear discriminant analysis (lda)}
+
+Los resultados obtenidos con este método en general no han sido demasiado buenos. El mejor resultado que se ha obtenido ha sido el siguiente.
+
+```{r}
+# método LDA
+
+lda_model <- train(target ~ .,
+      data = data_train_1,1,
+      method = "lda",
+      prior = c(0.5, 0.5))
+
+
+# Predicciones y validación
+
+predictionValidationProb_lda <- predict(lda_model, data_test_1.1, type = "prob") 
+auc_lda <- roc(data_test_1.1$target, predictionValidationProb_lda[["Yes"]], 
+               levels = unique(data_test_1.1[["target"]]))
+auc_lda
+roc_validation <- plot.roc(auc_lda, ylim=c(0,1), type = "S" , print.thres = T,
+                           main=paste('Validation AUC:', 
+                                      round(auc_lda$auc[[1]], 2)))
+
+# Matriz de confusión
+prediction_lda<- predict(lda_model, data_test_1.1, type = "raw") 
+confusion_matrix_lda<- confusionMatrix(table(prediction_lda, data_test_1.1[["target"]])) 
+confusion_matrix_lda
+
+```
+
+
+\textbf{Generalized linear model (glm)}
+
+Los resultados obhttps://topepo.github.io/caret/train-models-by-tag.htmltenidos con este método en general tampoco han sido demasiado buenos. El mejor resultado que se ha obtenido ha sido de un \texttt{auc} \textbf{0.62} y \textbf{0.58\%} de \texttt{acc}.
+
+```{r}
+# método GLM
+
+control_glm <- trainControl(method="none",classProbs = TRUE)
+
+glm_model <- train(target ~ .,
+      data = data_train,
+      method = "glm",
+      trControl = control_glm)
+
+
+# Predicciones y validación
+
+predictionValidationProb_glm <- predict(glm_model, data_test, type = "prob") 
+auc_glm <- roc(data_test$target, predictionValidationProb_glm[["Yes"]], 
+               levels = unique(data_test[["target"]]))
+auc_glm
+roc_validation <- plot.roc(auc_glm, ylim=c(0,1), type = "S" , print.thres = T,
+                           main=paste('Validation AUC:', 
+                                      round(auc_glm$auc[[1]], 2)))
+
+# Matriz de confusión
+prediction_glm<- predict(glm_model, data_test, type = "raw") 
+confusion_matrix_glm<- confusionMatrix(table(prediction_glm, data_test[["target"]])) 
+confusion_matrix_glm
+```
+
+\section{5. Conclusiones}
+
+Tras haber realizado toda la labor de preprocesamiento y clasificación de los datos, se aportan las siguientes conclusiones que se han obtenido tras haber realizado todo el proceso.
+
+\begin{itemize}
+	
+	\item El conjunto de datos que se ha analizado presenta un gran número de variables y todas son numéricas. Al visualizar los datos no se puede extraer ninguna información que se pueda interpretar a primera vista.
+	
+	\item Los datos presentan una baja correlación con la variable objetivo \texttt{target} por lo que a priori no se ha obtenido información relevante tras las exploración de los datos
+	
+	
+	\item Se ha comprobado como inicialmente los datos estaban bastantes desbalanceados y los modelos de predicción siempre predecían el valor de la clase mayoritaria.
+	
+	\item Se ha observado como los modelos de predicción son significativamente mejores (en conjunto de validación) tras haber realizado un balanceo de los datos.
+	
+	\item Dada la gran cantidad de datos y variables (aún habiéndolos reducido) hay métodos de clasificación que no han sido computacionalmente viables y se ha tenido que cancelar su ejecución, como por ejemplo \texttt{SVM} o \texttt{KNN}.
+	
+	\item En general no se han obtenido buenos resultados utilizando regresión con \texttt{rpart}, o con métodos como \texttt{lda} o \texttt{glm}. Sin duda, el método que ha dado mejores resultados ha sido \texttt{rf} (randomforest).
+	 
+	\item El mejor resultado de clasificación que se ha obtenido ha sido utilizando randomforest sobre un conjunto de datos balanceados. Se ha obtenido un \texttt{auc} de \textbf{0.98} , y un precisión del \textbf{92.5\%}
+	
+	\item Se ha utilizado el mejor modelo para predecir el conjunto de test de \texttt{kaggle} y se ha obtenido una puntuación de \textbf{0.5}. Esta gran diferencia obtenida entre el valor obtenido en validación, y el valor real obtenido con el test de \texttt{kaggle}, es debido a que al realizar el balanceo de datos, se han introducido muchas muestras que no han generalizado lo suficiente y esto ha sesgado el modelo, siendo bastante efectivo para el conjunto de validación (obvio ya que es obtenido de las muestras de los datos ya balanceados), y menos efectivo para el conjunto de test.
+	
+\end{itemize}
+
+\begin{thebibliography}{99}
+\bibitem{ref1} Diego Calvo, eliminar NA o valores nulos de R , disponible en \url{http://www.diegocalvo.es/eliminar-na-o-valores-nulos-en-r/}
+
+\bibitem{ref2}RDocumentation, SMOTE algorithm for unbalanced classification problems, disponible en \url{https://www.rdocumentation.org/packages/DMwR/versions/0.4.1/topics/SMOTE}.
+
+\bibitem{ref3} Jason Brownlee,Tune Machine Learning Algorithms in R, disponible en \url{https://machinelearningmastery.com/tune-machine-learning-algorithms-in-r/}.
+
+\bibitem{ref4} José R. Berrendero, RPubs, Introducción a CARET, disponible en \url{https://rpubs.com/joser/caret}.
+
+\bibitem{ref5} topepo.github.io, The caret package, disponible en \url{https://topepo.github.io/caret/train-models-by-tag.html}.
+
+\end{thebibliography}
